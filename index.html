@@ -1,28 +1,145 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cartomanti Online</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Stato Cartomanti – Operatori Online</title>
   <style>
-    body { font-family: Arial, sans-serif; background: #f5f5f5; text-align: center; }
-    h1 { color: #333; }
-    .operatore { margin: 10px; padding: 15px; background: #fff; border-radius: 8px; display: inline-block; }
-    .online { color: green; font-weight: bold; }
-    .offline { color: red; font-weight: bold; }
+    :root{--green:#16a34a;--amber:#f59e0b;--red:#dc2626;--bg:#f6f7fb;--card:#fff;--txt:#0f172a;--muted:#64748b;--br:#e5e7eb}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--txt)}
+    .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+    h1{margin:0 0 8px;font-size:22px}
+    .legend{color:var(--muted);font-size:12px;margin-bottom:12px}
+    .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+    input,select,button{padding:10px;border:1px solid var(--br);border-radius:10px;background:#fff;font-size:14px}
+    button{cursor:pointer}
+    .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+    .stat{background:var(--card);border:1px solid var(--br);border-radius:12px;padding:12px;display:flex;gap:10px;align-items:center}
+    .dot{width:10px;height:10px;border-radius:50%}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+    .card{background:var(--card);border:1px solid var(--br);border-radius:14px;padding:12px;box-shadow:0 2px 6px rgba(0,0,0,.05)}
+    .row{display:flex;gap:12px;align-items:center}
+    .avatar{width:60px;height:60px;border-radius:999px;object-fit:cover;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+    .title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .muted{color:var(--muted);font-size:12px}
+    .badge{font-size:12px;padding:4px 10px;border-radius:999px;color:#fff}
+    .err{background:#fee2e2;border:1px solid #fecaca;color:#7f1d1d;padding:10px;border-radius:10px;margin:10px 0;display:none}
+    .foot{margin-top:10px;color:var(--muted);font-size:12px;display:flex;gap:10px;align-items:center}
   </style>
 </head>
 <body>
-  <h1>Operatori Cartomanti</h1>
+<div class="wrap">
+  <h1>🔮 Stato Cartomanti</h1>
+  <div class="legend">💚 Disponibile · 🟧 In pausa · ❤️ In chiamata</div>
 
-  <div class="operatore">
-    <p><strong>Anna</strong></p>
-    <p class="online">Disponibile</p>
+  <div class="toolbar">
+    <input id="search" placeholder="Cerca nome o codice" inputmode="search" autocomplete="off" />
+    <select id="spec"><option value="">Tutte le specialità</option></select>
+    <button id="refresh" type="button">Aggiorna</button>
   </div>
 
-  <div class="operatore">
-    <p><strong>Marco</strong></p>
-    <p class="offline">Non disponibile</p>
-  </div>
+  <section class="stats">
+    <div class="stat"><span class="dot" style="background:var(--green)"></span><div><div class="muted">Disponibili</div><div id="s-on" style="font:700 20px/1 system-ui">0</div></div></div>
+    <div class="stat"><span class="dot" style="background:var(--amber)"></span><div><div class="muted">In pausa</div><div id="s-pa" style="font:700 20px/1 system-ui">0</div></div></div>
+    <div class="stat"><span class="dot" style="background:var(--red)"></span><div><div class="muted">In chiamata</div><div id="s-call" style="font:700 20px/1 system-ui">0</div></div></div>
+  </section>
+
+  <div id="error" class="err"></div>
+  <section id="list" class="grid"></section>
+  <div class="foot"><span id="updated">Ultimo aggiornamento —</span></div>
+</div>
+
+<script>
+  // 👉 Sostituisci con il tuo endpoint API vero
+  const API_BASE = "https://NOME-PROGETTO.vercel.app/api/sop";
+
+  const el = {
+    list: document.getElementById('list'),
+    err: document.getElementById('error'),
+    search: document.getElementById('search'),
+    spec: document.getElementById('spec'),
+    sOn: document.getElementById('s-on'),
+    sPa: document.getElementById('s-pa'),
+    sCall: document.getElementById('s-call'),
+    refresh: document.getElementById('refresh'),
+    updated: document.getElementById('updated'),
+  };
+
+  const LABEL = { online:"Disponibile", pause:"In pausa", oncall:"In chiamata" };
+  const COLOR = { online:"var(--green)", pause:"var(--amber)", oncall:"var(--red)" };
+
+  function esc(s){ return String(s||"").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  function normStatus(s){
+    const v = (s||"").toLowerCase();
+    if(v==="busy") return "oncall";
+    if(v==="paused") return "pause";
+    return ["online","pause","oncall"].includes(v) ? v : "pause";
+  }
+
+  let ALL = [];
+
+  function render(rows){
+    const q = (el.search.value||"").toLowerCase();
+    const spec = el.spec.value||"";
+    let data = rows.map(r=>({
+      name:r.name||"",
+      extension:r.extension||"",
+      queue:r.queue||"",
+      status:normStatus(r.status)
+    }));
+
+    if(q) data = data.filter(r=>r.name.toLowerCase().includes(q)||r.extension.toLowerCase().includes(q));
+    if(spec) data = data.filter(r=>r.queue===spec);
+
+    el.sOn.textContent = data.filter(r=>r.status==="online").length;
+    el.sPa.textContent = data.filter(r=>r.status==="pause").length;
+    el.sCall.textContent = data.filter(r=>r.status==="oncall").length;
+
+    const setQ = new Set(rows.map(r=>r.queue).filter(Boolean));
+    el.spec.innerHTML = '<option value="">Tutte le specialità</option>' +
+      Array.from(setQ).map(x=>`<option${x===spec?' selected':''}>${esc(x)}</option>`).join('');
+
+    el.list.innerHTML = data.map(r=>{
+      const st = r.status;
+      const color = COLOR[st]||"#999";
+      const label = LABEL[st]||st;
+      return `
+        <div class="card">
+          <div class="row">
+            <img class="avatar" src="img/${esc(r.extension)}.jpg" alt="${esc(r.name)}" onerror="this.src='https://via.placeholder.com/60x60?text=📞'">
+            <div style="flex:1;min-width:0">
+              <div class="title">📞 ${esc(r.name||("Cartomante "+r.extension))}</div>
+              <div class="muted">Codice: ${esc(r.extension)}${r.queue?' · '+esc(r.queue):''}</div>
+            </div>
+            <span class="badge" style="background:${color}">${esc(label)}</span>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  async function load(){
+    try{
+      el.err.style.display="none";
+      const res = await fetch(API_BASE+"?format=json",{cache:"no-store"});
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      const data = await res.json();
+      ALL = Array.isArray(data)?data:[];
+      render(ALL);
+      el.updated.textContent="Ultimo aggiornamento — "+new Date().toLocaleTimeString();
+    }catch(e){
+      el.err.textContent="Errore: "+e.message;
+      el.err.style.display="block";
+      el.updated.textContent="Ultimo aggiornamento — errore";
+      render([]);
+    }
+  }
+
+  el.search.addEventListener('input',()=>render(ALL));
+  el.spec.addEventListener('change',()=>render(ALL));
+  el.refresh.addEventListener('click',load);
+
+  load();
+  setInterval(load,5000);
+</script>
 </body>
 </html>
